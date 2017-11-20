@@ -297,7 +297,7 @@ for $\ell=1,\ldots,L$.
 \begin{frame}
 \frametitle{Model matrix for our heterosis experiment}
 
-Experimental design:  4 varieties, 2 plates, 2 replicates per variety per plate
+Experimental design:  4 varieties, 2 flow cells, 2 replicates per variety per flow cell
 
 \pause
 
@@ -323,11 +323,11 @@ where $\otimes$ denotes the Kronecker product and $J_{m \times n}$ is the $m$ by
 
 Interpretations of the gene-specific parameters (dropping the $g$ subscript) are
 \begin{itemize}[<+->]
-\item $\beta_1$ is the parental mean
-\item $\beta_2$ is the half difference of hybrid mean vs M
-\item $\beta_3$ is the half difference of hybrid mean vs B
-\item $\beta_4$ is the half difference between hybrids
-\item $\beta_5$ is the flow cell block effect 
+\item $\beta_{g1}$ is the parental mean
+\item $\beta_{g2}$ is the half difference of hybrid mean vs M
+\item $\beta_{g3}$ is the half difference of hybrid mean vs B
+\item $\beta_{g4}$ is the half difference between hybrids
+\item $\beta_{g5}$ is the flow cell block effect 
 \end{itemize}
 \end{frame}
 
@@ -349,7 +349,7 @@ low-parent mean & $\mu_{g,\text{BM}} + \mu_{g,\text{MB}} < 2 \min\, \left (\mu_{
 
 \vspace{0.2in} \pause
 
-All hypothesis regions are intersections of linear combination events\pause, but we can also accomodate unions of contrast events via 
+All hypothesis regions are intersections of linear combination events\pause, but we can also accommodate unions of contrast events via 
 \[ 
 P(A\cup B) = P(A) + P(B) - P(A \cap B).
 \]
@@ -465,7 +465,7 @@ Took about 10 hours to run.
 \frametitle{Priors}
 
 All priors are constructed to be vague, proper, and (if possible) conditionally conjugate. \pause 
-There are $2(L+1)$ hyperparameters and we assign the following priors
+There are $2(L+1)$ hyperparameters and we assign the following independent priors
 \[ \begin{array}{rll}
 \tau &\sim Ga(a,b) & \mbox{conditionally conjugate} \\
 \nu &\sim Unif(0,d) \\
@@ -543,7 +543,7 @@ make accelerators a good choice for parallelizable MCMC. {\tiny (Lee et. al. (20
 If there are $G$ nodes, \pause then 
 \begin{itemize}
 \item Conditional independence \pause $\to$ embarrassingly parallel \pause - possible speedup is $G$ \pause
-\item Calculate sufficient ``statistics'' \pause $\to$ reduction \pause - possible speedup is $[G-1]/\log_2(G)$
+\item Calculate sufficient ``statistics'' \pause $\to$ reduction \pause - possible speedup is $[G-1]/\log_2(G)\pause \approx 2,500$
 \end{itemize}
 
 \vspace{0.1in} \pause
