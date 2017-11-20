@@ -1,0 +1,1060 @@
+\documentclass[handout,10pt]{beamer}
+
+\usetheme{AnnArbor}
+\usecolortheme{beaver}
+
+\graphicspath{{include/}}
+
+\setlength{\unitlength}{\textwidth}  % measure in textwidths
+\usepackage[normalem]{ulem}
+
+% to avoid counting all pages
+\newcommand{\backupbegin}{
+   \newcounter{finalframe}
+   \setcounter{finalframe}{\value{framenumber}}
+}
+\newcommand{\backupend}{
+   \setcounter{framenumber}{\value{finalframe}}
+}
+
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{enumerate items}[default]
+\setbeamertemplate{enumerate subitem}{\alph{enumii}.}
+\setbeamertemplate{enumerate subsubitem}{\roman{enumiii}.}
+\setkeys{Gin}{width=0.6\textwidth}
+
+\newcommand{\ind}{\stackrel{ind}{\sim}}
+\providecommand{\ov}[1]{\overline{#1}}
+
+
+\institute[ISU]{Iowa State University}
+\date{\today}
+
+\title[Fully Bayes RNAseq analysis]{Fully Bayesian analysis of RNAseq data for gene expression heterosis detection}
+\author{Dr. Jarad Niemi}
+
+\begin{document}
+
+
+
+\begin{frame}
+\maketitle
+
+\pause
+
+{\small
+Dr. Dan Nettleton, Dr. Will Landau, Eric Mittman, and Dr. Ignacio Alvarez-Castro
+}
+
+\vspace{0.2in} \pause
+
+{\tiny
+This research was supported by National Institute of General Medical Sciences (NIGMS) of the National Institutes of Health and the joint National Science Foundation / NIGMS Mathematical Biology Program under award number R01GM109458. The content is solely the responsibility of the authors and does not necessarily represent the official views of the National Institutes of Health or the National Science Foundation.
+}
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Outline}
+
+\begin{itemize}
+\item Background
+	\begin{itemize}
+	\item Heterosis
+	\item RNAseq data \pause
+	\end{itemize}
+\item Modeling 
+	\begin{itemize}
+	\item Composite null hypothesis \pause
+	\item Hierarchical overdispersed count regression model \pause
+	\end{itemize}
+\item Inference
+	\begin{itemize}
+	\item Empirical Bayes
+	\item Fully Bayes \pause on graphics processing units
+		\begin{itemize}
+		\item Memory transfers
+		\item Random number generation \pause
+		\end{itemize}
+	\end{itemize}
+\item Simulation studies
+	\begin{itemize}
+	\item Credible interval coverage
+	\item Heterosis detection via ROC curves \pause
+	\end{itemize}
+\item Real data analysis \pause
+%\item Ongoing work
+\end{itemize}
+
+\end{frame}
+
+
+\section{Background}
+\subsection{Heterosis}
+
+\begin{frame}
+\frametitle{Heterosis}
+\begin{definition}
+Heterosis, or hybrid vigor, is the enhancement of the phenotype of hybrid progeny relative to their inbred parents.
+\end{definition}
+
+\pause
+
+\begin{center}
+\includegraphics{heterosis}
+\end{center}
+{\tiny (\url{http://www2.iastate.edu/~nscentral/news/06/may/vigor.shtml} modified by Will Landau)} 
+\end{frame}
+
+
+
+\subsection{RNAseq data}
+% \begin{frame}
+% \frametitle{RNAseq data}
+% \setkeys{Gin}{width=0.8\textwidth}
+% \begin{center}
+% \includegraphics{rnaseq}
+% \end{center}
+% {\tiny Wang, Gerstein, and Snyder. (2010) \url{http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2949280/figure/F1/}}
+% \end{frame}
+
+
+% \begin{frame}
+% \frametitle{RNAseq data}
+% \begin{center}
+% \includegraphics{rnaseq2}
+% \end{center}
+% {\tiny url{http://bio.lundberg.gu.se/courses/vt13/rnaseq.html}}
+% \end{frame}
+
+
+\begin{frame}
+\frametitle{RNA fragmentation, sequencing, and alignment}
+\setkeys{Gin}{width=0.5\textwidth}
+\begin{center}
+\includegraphics{rnaseq3}
+\end{center}
+{\tiny (Pepke, Wold, and Mortazavi (2009) \url{http://www.nature.com/nmeth/journal/v6/n11s/fig_tab/nmeth.1371_F5.html})}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{RNAseq data}
+\setkeys{Gin}{width=0.7\textwidth}
+
+\begin{center}
+\includegraphics{data}
+{\tiny (Will Landau)}
+\end{center}
+
+\pause
+{\small
+\begin{itemize}
+\item Low parent heterosis (LPH): expression in hybrid is lower than both parents
+\item High parent heterosis (HPH): expression in hybrid is higher than both parents
+\end{itemize}
+}
+\end{frame}
+
+
+\section{Modeling}
+\subsection{Composite null hypothesis}
+\begin{frame}
+\frametitle{Hypotheses}
+\setkeys{Gin}{width=0.2\textwidth}
+\footnotesize
+
+For a given gene, let 
+\begin{itemize}\scriptsize
+\item $\mu_{B\phantom{M}}$: mean expression for B73 inbred parent,
+\item $\mu_{M\phantom{B}}$: mean expression for Mo17 inbred parent,
+\item $\mu_{BM}$: mean expression for B73$\times$Mo17 F1 hybrid, and
+\item $\mu_{MB}$: mean expression for Mo17$\times$B73 F1 hybrid.
+\end{itemize}
+\pause
+We are interested in comparing hypotheses of the form
+\[ 
+H_0: \mu_{min} < \mu_{BM} < \mu_{max}, \qquad H_{LPH}: \mu_{BM} < \mu_{min}, \qquad H_{HPH}: \mu_{max} < \mu_{BM}
+\]
+where $\mu_{min} = \min(\mu_B,\mu_M)$ and $\mu_{max} = \max(\mu_B,\mu_M)$. 
+
+\vspace{0.1in} \pause
+
+<<echo=FALSE, out.width='0.3\\textwidth', fig.align='center', fig.width=4, fig.height=4>>=
+mB = expression(mu[B])
+mM = expression(mu[M])
+mBM = expression(mu[BM])
+
+opar = par(mar=rep(0,4)+.1)
+plot(0,0, type="n", axes=FALSE, xlab="", ylab="", xlim=c(-1,1), ylim=c(-1,1))
+polygon(c(0,-2,-2,0), c(0,2,-2,0), col='pink', border=NA)
+polygon(c(0, 2, 2,0), c(0,2,-2,0), col='pink', border=NA)
+abline(0, 1)
+abline(0,-1)
+abline(0,0,lty=2)
+text(-0.8, 1, expression(mu[B]==mu[BM]))
+text( 0.8, 1, expression(mu[BM]==mu[M]))
+text( 0.9,.05, expression(mu[B]==mu[M]))
+text( 0.0, 0.8, expression(paste(mu[B], "<", mu[BM] < mu[M])))
+text( 0.8, 0.5, expression(paste(mu[B], "<", mu[M] < mu[BM])))
+text( 0.8,-0.5, expression(paste(mu[M], "<", mu[B] < mu[BM])))
+text( 0.0,-0.8, expression(paste(mu[M], "<", mu[BM] < mu[B])))
+text(-0.8,-0.5, expression(paste(mu[BM], "<", mu[M] < mu[BM])))
+text(-0.8, 0.5, expression(paste(mu[BM], "<", mu[B] < mu[M])))
+text(-0.5, 0, "LPH", cex=2)
+text( 0.5, 0, "HPH", cex=2)
+par(opar)
+@
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Posterior hypothesis probabilities}
+\small
+
+If we had a posterior distribution for the mean expression levels, i.e. 
+\[ 
+p(\mu_B,\mu_M,\mu_{BM},\mu_{MB}|y)
+\]
+where $y$ represents our data, 
+then we could calculate the relevant hypothesis probabilities, i.e. 
+\[ \begin{array}{rl}
+P(H_{0\phantom{PH}}|y) &= P(\mu_{min} < \mu_{BM} < \mu_{max}|y) \\
+P(H_{LPH}|y) &= P(\mu_{BM} < \mu_{min}|y) \\
+P(H_{HPH}|y) &= P(\mu_{max} < \mu_{BM}|y).
+\end{array} \] 
+
+\vspace{0.1in} \pause
+
+Hierarchical modeling \emph{partially pools} the information across genes and thereby provides a data-based multiple comparison adjustment by 
+\begin{itemize}
+\item shrinking estimates toward a grand mean (or zero) based on the variability inherent in the data and 
+\item reducing posterior uncertainty by borrowing information across genes. 
+\end{itemize}
+{\tiny (Gelman, Hill, and Yajima (2012))}
+
+\end{frame}
+
+
+\subsection{Hierarchical overdispersed count regression model}
+\begin{frame}
+\frametitle{Overdispersed count regression model}
+
+Let 
+\begin{itemize}
+\item $g$ ($g=1,\ldots,G$) identify the gene, 
+\item $n$ ($n=1,\ldots,N$) identify the sample, \pause
+\item $y$ be the $G\times N$ matrix of RNAseq counts \pause and
+\item $X$ be the $N\times L$ model matrix that connects the $N$ samples to the varieties, blocking factors, etc.
+\end{itemize}
+\pause
+We assume 
+\[ 
+y_{gn} \ind \text{Po} \left (e^{h_n + \varepsilon_{gn} + x_n' \beta_{g}} \right )
+\]
+\pause
+where 
+\begin{itemize}[<+->]
+\item $h_n$ are \emph{normalization factors},
+\item $\varepsilon_{gn} \ind N(0,\gamma_g)$ allow for gene-specific overdispersion, 
+\item $x_n$ is the $n^{th}$ row of $X$, and
+\item $\beta_g$ is a vector of length $L$ that account for effects on gene expression of variables of interest. 
+\end{itemize}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Hierarchical model}
+
+Recall 
+\[ 
+y_{gn} \ind \text{Po} \left (e^{h_n + \varepsilon_{gn} + x_n' \beta_{g}} \right )
+\qquad\mbox{and}\qquad
+\varepsilon_{gn} \ind N(0,\gamma_g).
+\]
+
+\vspace{0.1in} \pause
+
+We construct a hierarchical model for both $\gamma_g$ and $\beta_g$ to borrow information across genes. \pause
+Specifically, we assume
+\[ 
+1/\gamma_g\ind \text{Ga} \left (\nu/2,\nu\tau/2 \right)
+\]
+such that $E[1/\gamma_g] = 1/\tau$ and $CoV[1/\gamma_g] = \sqrt{2/\nu}$ \pause and 
+\[ 
+\beta_{g\ell} \ind N(\theta_\ell, \sigma_\ell^2)
+\]
+for $\ell=1,\ldots,L$. 
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Model matrix for our heterosis experiment}
+
+Experimental design:  4 varieties, 2 plates, 2 replicates per variety per plate
+
+\pause
+
+\begin{equation*} 
+X = \left (
+\begin{bmatrix}
+1 & \phantom{-}1 & -1 & \phantom{-}0 \\
+1 & -1 & \phantom{-}1 & \phantom{-}0 \\
+1 & \phantom{-}1 & \phantom{-}1 & \phantom{-}1 \\
+1 & \phantom{-}1 & \phantom{-}1 & -1 \\
+\end{bmatrix} \otimes J_{(N/4) \times 1} \qquad \qquad
+J_{(N/4) \times 1} \otimes
+\begin{bmatrix}
+\phantom{-}1  \\
+\phantom{-}1  \\
+-1 \\
+-1  \\
+\end{bmatrix} \right )
+\end{equation*}
+where $\otimes$ denotes the Kronecker product and $J_{m \times n}$ is the $m$ by $n$ matrix with all entries equal to 1.
+
+\vspace{0.1in} \pause
+
+Interpretations of the gene-specific parameters (dropping the $g$ subscript) are
+\begin{itemize}[<+->]
+\item $\beta_1$ is the parental mean
+\item $\beta_2$ is the half difference of hybrid mean vs M
+\item $\beta_3$ is the half difference of hybrid mean vs B
+\item $\beta_4$ is the half difference between hybrids
+\item $\beta_5$ is the flow cell block effect 
+\end{itemize}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Heterosis hypotheses}
+
+{\footnotesize
+\begin{tabular}{l|l|l}
+Heterosis & With log-scale group means  & With $\beta_{g\ell}$ parameters \\ \hline
+high-parent BM & $\phantom{1\mu_{g,\text{BM}} + } \mu_{g,\text{BM}} > \phantom{2} \max \left (\mu_{g,\text{B}}, \mu_{g,\text{M}} \right )$ & $\phantom{-}2\beta_{g2} + \beta_{g4}, \phantom{-}2\beta_{g3} + \beta_{g4} > 0$ \\
+low-parent BM & $\phantom{1\mu_{g,\text{BM}} + }\mu_{g,\text{BM}} < \phantom{2}  \min\, \left (\mu_{g,\text{B}}, \mu_{g,\text{M}} \right )$ & $-2\beta_{g2} - \beta_{g4}, -2\beta_{g3} - \beta_{g4} > 0$ \\
+high-parent MB & $\phantom{1\mu_{g,\text{BM}} + }\mu_{g,\text{MB}} > \phantom{2}  \max \left (\mu_{g,\text{B}}, \mu_{g,\text{M}} \right )$ & $\phantom{-}2\beta_{g2} - \beta_{g4}, \phantom{-}2\beta_{g3} - \beta_{g4} > 0$ \\
+low-parent MB & $\phantom{1\mu_{g,\text{BM}} + }  \mu_{g,\text{MB}} < \phantom{2} \min\, \left (\mu_{g,\text{B}}, \mu_{g,\text{M}} \right )$ & $-2\beta_{g2} + \beta_{g4}, \phantom{-}2\beta_{g3} + \beta_{g4} > 0$ \\
+high-parent mean & $\mu_{g,\text{BM}} + \mu_{g,\text{MB}} > 2 \max \left (\mu_{g,\text{B}}, \mu_{g,\text{M}} \right )$ & $\phantom{-}\beta_{g2}, \phantom{-}\beta_{g3} > 0$ \\
+low-parent mean & $\mu_{g,\text{BM}} + \mu_{g,\text{MB}} < 2 \min\, \left (\mu_{g,\text{B}}, \mu_{g,\text{M}} \right )$ & $-\beta_{g2}, -\beta_{g3} > 0$ 
+\end{tabular}
+}
+
+\vspace{0.2in} \pause
+
+All hypothesis regions are intersections of linear combination events\pause, but we can also accomodate unions of contrast events via 
+\[ 
+P(A\cup B) = P(A) + P(B) - P(A \cap B).
+\]
+
+\end{frame}
+
+\begin{frame}
+\frametitle{Directed acyclic graphical model}
+\setkeys{Gin}{width=\textwidth}
+
+\vspace{-0.1in}
+
+\begin{center}
+\begin{minipage}{0.49\textwidth}
+\includegraphics{dag3c}
+\end{minipage}
+\pause
+\begin{minipage}{0.49\textwidth}
+\[ \begin{array}{l}
+p(\varepsilon,\beta,\gamma,\theta,\sigma,\tau,\nu|y) \pause = \\ \\
+p(\varepsilon,\beta,\gamma|\tau,\nu,\theta,\sigma, y) \\
+\, \times p(\tau,\nu,\theta,\sigma|y) \pause \propto \\ \\
+\quad \prod_{g=1}^G \left\{ \left[ \prod_{n=1}^N p(y_{gn}|\beta_{g},\varepsilon_{gn}) p(\varepsilon_{gn}|\gamma_g) \right] \right. \\
+\quad \phantom{\prod_{g=1}^G} \left[\prod_{\ell=1}^L p(\beta_{g\ell}|\theta_\ell,\sigma_\ell) p(\theta_\ell) p(\sigma_\ell) \right] \\
+\quad \left.\phantom{\prod_{g=1}^G} p(\gamma_g|\tau,\nu) \right\} p(\tau)p(\nu)
+\end{array} \]
+\end{minipage}
+{\tiny (Will Landau)}
+\end{center}
+
+% \begin{figure}[htbp]
+%    \centering
+%    \begin{minipage}{0.49\textwidth}
+%    \begin{align*}
+% &y_{gn} \stackrel{\text{ind}}{\sim} \text{Poisson} \left (\exp \left (h_n + \varepsilon_{gn} + X_n \beta_{g} \right ) \right ) \\
+% & \qquad \varepsilon_{gn} \stackrel{\text{ind}}{\sim} \text{Normal}(0, \gamma_g) \\
+% & \qquad \qquad \gamma_g \stackrel{\text{ind}}{\sim} \text{Inverse-Gamma}\left (\frac{\nu}{2}, \frac{\nu \tau}{2} \right) \\
+% & \qquad \qquad \qquad \nu \stackrel{\text{}}{\sim} \text{Uniform}(0, d) \\
+% & \qquad \qquad \qquad \tau \stackrel{\text{}}{\sim} \text{Gamma}(a, \text{rate} = b) \\
+% & \qquad \beta_{g\ell} \stackrel{\text{ind}}{\sim} \text{Normal}(\theta_\ell, \sigma_\ell^2) \\
+% & \qquad \qquad \theta_\ell \stackrel{\text{ind}}{\sim} \text{Normal}(0, c_\ell^2) \\
+% & \qquad \qquad \sigma_\ell \stackrel{\text{ind}}{\sim} \text{Uniform}(0, s_\ell)
+% \end{align*}
+%    \end{minipage} 
+%    \begin{minipage}{0.49\textwidth}
+%    \includegraphics{dag3c}
+%    \end{minipage}
+% \end{figure}
+\pause
+where $G\approx 40\,000$, $N=16$, and $L=5$ in our application \pause and thus we have 
+\begin{itemize}
+\item $G\times N + G + 2 + G\times L + 2\times L \approx 800\,000$ parameters \pause
+\item and $G\times N \approx 640\,000$ observations.
+\end{itemize}
+\end{frame}
+
+
+
+
+\section{Inference}
+\subsection{Empirical Bayes}
+\begin{frame}[fragile]
+\frametitle{\onslide<2->{Empirical Bayes}}
+\small
+
+First we tried to fit this model using black-box Bayesian software, i.e. JAGS and Stan, but it appears computationally intractable using these platforms. 
+
+\vspace{0.2in} \pause
+
+Niemi, Mittman, Landau, and Nettleton (2015) used an empirical Bayes approach by 
+{\footnotesize
+\begin{enumerate}
+\item using moment matching techniques on independent gene-specific parameter estimates to obtain hyperparameter estimates
+\item and then parallelizing the MCMC across genes, i.e. 
+\end{enumerate}
+\[
+p(\varepsilon,\beta,\gamma|\hat{\tau},\hat{\nu},\hat{\theta},\hat{\sigma}, y) \propto
+\prod_{g=1}^G \left\{ \left[ \prod_{n=1}^N p(y_{gn}|\beta_{g},\varepsilon_{gn}) p(\varepsilon_{gn}|\gamma_g) \right] \left[\prod_{\ell=1}^L p(\beta_{g\ell}|\hat\theta_\ell,\hat\sigma_\ell) \right]
+p(\gamma_g|\hat\tau,\hat\nu) \right\}
+\]
+
+}
+
+\pause
+
+<<eval=FALSE, size="tiny">>=
+if (require(doMC)) {
+  registerDoMC()
+} else {
+  parallel=FALSE
+}
+
+analysis = adply(d,
+                 1,
+                 function(x) single_gene_analysis(x),
+                 .id = 'gene',
+                 .parallel = parallel,
+                 .paropts = list(.export=c('single_gene_analysis','model','hyperparameters'), .packages='rstan'))
+@
+
+\pause
+
+Took about 10 hours to run. 
+
+\end{frame}
+
+
+
+
+
+\subsection{Fully Bayes}
+\begin{frame}
+\frametitle{Priors}
+
+All priors are constructed to be vague, proper, and (if possible) conditionally conjugate. \pause 
+There are $2(L+1)$ hyperparameters and we assign the following priors
+\[ \begin{array}{rll}
+\tau &\sim Ga(a,b) & \mbox{conditionally conjugate} \\
+\nu &\sim Unif(0,d) \\
+\theta_\ell &\ind N(0,c_\ell^2) & \mbox{conditionally conjugate} \\
+\sigma_\ell &\ind Unif(0,s_\ell) & \mbox{{\tiny (Gelman (2006))}}
+\end{array} \]
+\pause
+As we'll see, posterior distributions for these parameters are extremely tight relative to their priors. 
+
+\end{frame}
+
+
+
+
+
+\begin{frame}
+\frametitle{Constructing a Gibbs sampler}
+
+Conditional independence within a step:
+\[ \begin{array}{rl}
+p(\varepsilon|\ldots) &\propto \prod_{g=1}^G \prod_{n=1}^N Po\left(y_{gn}|e^{h_n+\varepsilon_{gn}+x_n'\beta_g}\right)N(\varepsilon_{gn}|0,\gamma_g) \\
+p(\gamma|\ldots) &\propto \prod_{g=1}^G \prod_{n=1}^N N(\varepsilon_{gn}|0,\gamma_g) IG(\gamma_g|\nu/2,\nu\tau/2) \\
+p(\beta_{\ell}|\ldots) &\propto \prod_{g=1}^G \prod_{n=1}^N Po\left(y_{gn}|e^{h_n+\varepsilon_{gn}+x_n'\beta_g}\right)N(\beta_{g\ell}|\theta_\ell, \sigma_\ell^2) 
+\end{array} \]
+
+\vspace{0.1in} \pause
+
+Sufficient ``statistics'':
+\[ \begin{array}{rl@{\qquad}rl}
+p(\tau|\ldots) &\sim Ga(\tau|a',b') & (a',b') &= f_{\tau}(\gamma,\nu,a,b) \\
+p(\nu|\ldots) &\sim p(\nu|d')\mathrm{I}(0<\nu<d) & d' &= f_\nu(\gamma,\tau,d) \\
+p(\theta_\ell|\ldots) &\sim N(\theta_\ell|m'_\ell, C'_\ell) & (m'_\ell,C'_\ell) &= f_{\theta_\ell}(\beta_\ell,\sigma_\ell,c_\ell^2) \\
+p(\sigma_\ell^2|\ldots) &\sim IG(e',f') \mathrm{I}(0<\sigma_\ell^2<s^2_\ell) & (e',f') &= f_{\sigma_\ell}(\beta_\ell,\theta_{\ell})
+\end{array} \]
+\pause
+where the functions calculate means, variances, products, etc. over $G$ terms. 
+\end{frame}
+
+
+\subsection{GPUs}
+\begin{frame}
+\frametitle{Parallel hardware platforms}
+
+(All values are orders of magnitude)
+
+\begin{center}
+\begin{tabular}{l|rrr}
+& \multicolumn{3}{c}{Platform} \\
+& Multicore & Accelerator (GPU) & Cluster \\
+\hline
+\# of nodes &  10 &  1000 &  100+ \\
+node speed (GHz) &  1 &  1 &  1   \\
+memory (GB) &  10 &  10 &  10/node \\
+node comm. speed (GB/s) &  10 &  10 &  1 \\
+data transfer speed (GB/s) & N/A &  1 &  1 \\
+\hline
+\end{tabular}
+\end{center}
+
+\vspace{0.1in} \pause
+
+The combination of 
+\begin{itemize}
+\item number of nodes and
+\item node communication speed
+\end{itemize}
+make accelerators a good choice for parallelizable MCMC. {\tiny (Lee et. al. (2010))}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Parallelization translated to a GPU}
+
+If there are $G$ nodes, \pause then 
+\begin{itemize}
+\item Conditional independence \pause $\to$ embarrassingly parallel \pause - possible speedup is $G$ \pause
+\item Calculate sufficient ``statistics'' \pause $\to$ reduction \pause - possible speedup is $[G-1]/\log_2(G)$
+\end{itemize}
+
+\vspace{0.1in} \pause
+
+\begin{center}
+\includegraphics{parallel_reduction}
+
+{\tiny (\url{https://scs.senecac.on.ca/~gpu610/pages/images/parallel_reduction.png})}
+\end{center}
+
+
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{GPU computing algorithm constraints}
+
+\begin{center}
+\begin{tabular}{ll}
+Constraint & Solution \\
+\hline
+memory coalescence \pause & set up proper data structures \pause \\ \\
+only uniform and normal RNGs \pause & step out slice sampler \pause \\ \\
+data transfer speed \pause & thinning \pause \\ \\
+& return draws for a small subset of parameters \\
+& \quad hyperparameters \\
+& \quad random set of gene-specific parameters \pause \\ \\
+& calculate running sums for \\
+& \quad convergence diagnostics \\
+& \quad normal-based credible intervals \\
+& \quad hypothesis probabilities \\
+\hline
+\end{tabular}
+\end{center}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Convergence diagnostics}
+\small
+
+For each parameter $\theta$ over the $M$ iterations of chain $c$, calculate 
+\[ 
+M\ov{\theta}_c= \sum_{m = 1}^M \theta_c^{(m)} 
+\qquad\mbox{and}\qquad
+M\ov{\theta^2}_c = \sum_{m = 1}^M \left(\theta_c^{(m)} \right)^2.
+\]
+using a numerically stable one-pass (or online) algorithm.
+
+\vspace{0.1in} \pause \pause
+
+Compute  the Gelman-Rubin convergence diagnostic amongst $C$ chains using
+\[
+\widehat{R} = \sqrt{1 + \frac{1}{M} \left(\frac{B}{W} - 1 \right)}
+\] 
+where 
+\[
+B = \frac{M}{C - 1} \sum_{c = 1}^C  \left (\ov{\theta}_c - \ov{\theta} \right )^2,
+W = \frac{1}{C} \sum_{c = 1}^C S_c^2,
+\]
+\[
+\ov{\theta} = \frac{1}{C} \sum_{c = 1}^C \ov{\theta}_c,
+\mbox{ and }
+S_c^2 = \frac{M}{M-1}\left[\ov{\theta^2}_c-\ov{\theta}^2_c \right] \approx \ov{\theta^2}_c-\ov{\theta}^2_c 
+%\frac{1}{M - 1} \sum_{m = 1}^M \left (\theta_c^{(m)} - \ov{\theta}_c \right )^2
+.
+\]
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Normal-based credible intervals}
+
+For the collection of parameters $\psi$ and under regularity conditions, we have 
+\[ 
+p_N(\psi|y_N) \stackrel{d}{\to} N\left(\psi_0, \left[\mathrm{I}_N(\psi_0)\right]^{-1}\right)
+\]
+as $N\to \infty$ where $\psi_0$ is the true value and $\mathrm{I}_N(\psi_0)$ is the Fisher information. 
+
+\vspace{0.1in} \pause
+
+For any scalar parameter $\theta$, we have 
+\[ 
+\theta|y \dot\sim N\left(\ov{\theta}, \ov{\theta^2}-\ov{\theta}^2\right)
+\]
+\pause
+and can construct normal-based credible intervals with 
+\[ 
+\ov{\theta} \pm z_{\alpha/2} \sqrt{\ov{\theta^2}-\ov{\theta}^2}
+\]
+where $P(Z>z_\alpha)=\alpha$ and $Z$ is a standard normal distribution.
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Estimating hypothesis probabilities}
+
+Recall we are interested in estimating probabilities similar to 
+
+\[ \begin{array}{l}
+P(\mbox{high parent heterosis for the B73$\times$Mo17 hybrid}|y) \\ \\
+\qquad = P\left(\left.2\beta_{g2} + \beta_{g4}>0 \mbox{ and }  2\beta_{g3} + \beta_{g4} > 0\right|y \right) \pause \\ \\
+\qquad \approx \frac{1}{M} \sum_{m=1}^M \mathrm{I}\left( 2\beta_{g2}^{(m)} + \beta_{g4}^{(m)}>0\right)\mathrm{I}\left(2\beta_{g3}^{(m)} + \beta_{g4}^{(m)} > 0 \right) 
+\end{array} \]
+
+\vspace{0.1in} \pause
+
+We can use the running sums to keep track of this sum. 
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]
+\frametitle{Implementation}
+The computation for this hierarchical overdispersed count regression model is provided in the following three R packages at \url{https://github.com/wlandau/}:
+
+\begin{itemize}
+\item {\tt fbseq}: user interface 
+\item {\tt fbseqOpenMP}: multithreaded backend
+\item {\tt fbseqCUDA}: NVIDIA GPU backend
+\end{itemize}
+
+\pause
+
+<<setup,size="tiny">>=
+library(fbseq)
+data(paschold) # Paschold et. al. (2012) data
+
+paschold@contrasts[[5]]
+paschold@contrasts[[6]]
+paschold@propositions$`high-parent_B73xMo17`
+@
+
+<<dependson="setup",eval=FALSE, size="tiny">>=
+configs    = Configs(burnin = 10, iterations = 10, thin = 1) 
+chain      = Chain(paschold, configs) 
+chain_list = fbseq(chain, backend = "CUDA")
+@
+\end{frame}
+
+
+
+
+\section{Simulation studies}
+
+\begin{frame}
+\frametitle{Simulation studies}
+
+\begin{itemize}
+\item Simulation model
+  \begin{itemize}
+  \item Model: hierarchical count regression model with data-based hyperparameters
+  \item Simple: count regression model with sparsity in gene-specific parameters 
+  \item edgeR: negative binomial model with data-based gene-specific parameters \pause
+  \end{itemize}
+\item Inference
+  \begin{itemize}
+  \item edgeR: non-hierarchical except for overdispersion, negative binomial model
+  \item fully Bayes: Bayesian analysis with hierarchical count regression model  \pause
+  \item eBayes (Means): empirical Bayesian analysis with hierarchical count regression model with hyperparameter estimated from posterior means of the fully Bayes approach
+  \item eBayes (Oracle): empirical Bayesian analysis with hierarchical count regression model with true values for the hyperparameters \pause
+  \end{itemize}
+\item Data size
+  \begin{itemize}
+  \item $G=30\,000$
+  \item $N=16$ and $N=32$
+  \end{itemize}
+\end{itemize}
+
+\end{frame}
+
+\subsection{Credible interval coverage}
+\begin{frame}
+\frametitle{Hyperparameter coverage}
+\setkeys{Gin}{width=0.8\textwidth}
+\begin{center}
+\includegraphics{fig-hypercoverage}
+\end{center}
+\end{frame}
+
+\begin{frame}
+\frametitle{Gene-specific parameter coverage}
+
+Overall, we had approximately 95\% coverage of 95\% credible intervals, \pause but 
+
+\vspace{0.1in}
+
+\begin{center}
+\includegraphics{fig-betashrink}
+\end{center}
+
+where the lower plot indicates that when the intervals miss, we are overshrinking. 
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Mean squared error}
+\setkeys{Gin}{width=0.8\textwidth}
+\begin{center}
+\includegraphics{fig-msecomparison}
+\end{center}
+\end{frame}
+
+
+
+\subsection{Heterosis detection}
+\begin{frame}
+\frametitle{ROC curves for heterosis detection}
+\setkeys{Gin}{width=0.8\textwidth}
+\begin{center}
+\includegraphics{fig-roc16}
+\end{center}
+\end{frame}
+
+
+
+
+\section{Real data analysis}
+\begin{frame}
+\setkeys{Gin}{width=0.4\textwidth}
+\frametitle{Analysis of Paschold et. al. (2012) data}
+
+\begin{center}
+\includegraphics{heterosis}
+\end{center}
+
+\begin{itemize}
+\item $N=16$ with 4 replicates/variety on 2 plates
+	\begin{itemize}
+	\item varieties: B73, Mo17, B73$\times$Mo17, Mo17$\times$ B73
+	\end{itemize}
+\item $G=39\,656$
+\item 21\% of genes have mean counts less than 1
+\item 39\% have mean counts less than 10
+\item count: median 37, mean $260$, and max $38\,010$
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Hyperparameter posterior}
+\setkeys{Gin}{width=0.8\textwidth}
+\begin{center}
+\includegraphics{fig-hyperhist}
+\end{center}
+\end{frame}
+
+
+\begin{frame}
+\setkeys{Gin}{width=0.6\textwidth}
+\frametitle{Gene-specific parameter posteriors}
+
+Compare posterior distribution (gray area) to normal-based approximation (black dashed line).
+
+\vspace{-0.15in}
+
+\begin{center}
+\includegraphics{fig-betahist}
+\end{center}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Smokestack plot}
+\setkeys{Gin}{width=0.7\textwidth}
+
+Effect size for HPH BM is the maximum of 0 and $\min(2\beta_{g2}+\beta_{g4}, 2\beta_{g3}+\beta_{g4})/\sqrt{\gamma_g}$. 
+
+\begin{center}
+\includegraphics{fig-volcano}
+\end{center}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Shrinkage}
+\setkeys{Gin}{width=0.7\textwidth}
+
+\begin{center}
+\includegraphics{fig-edgerparms}
+\end{center}
+\end{frame}
+
+
+
+\begin{frame}
+\frametitle{Summary}
+
+\begin{itemize}
+\item Introduced a hierarchical overdispersed count regression model and
+\item a GPU-implementation of a fully Bayesian analysis.
+\end{itemize}
+
+\vspace{0.2in} \pause
+
+This slides are available 
+\begin{itemize}
+\item \url{https://github.com/jarad/UCI2017}
+\item \url{http://www.jarad.me/research/presentations.html}
+\end{itemize}
+
+\vspace{0.2in} \pause
+
+\begin{center}
+{\Huge
+Thank you!
+}
+\end{center}
+
+\end{frame}
+
+\appendix
+\backupbegin
+\section{Ongoing work}
+\begin{frame}
+\frametitle{Ongoing work}
+
+\begin{itemize}
+\item Alternative hierarchical distributions via scale mixtures of normals:
+	\begin{itemize}
+	\item $t$
+	\item Laplace
+	\item Horseshoe
+	\end{itemize}
+\item Semi-parametric Bayesian model	
+	\begin{itemize}
+	\item Gene-specific parameters arise from an unknown distribution $\mathcal{F}$
+	\item assume Dirichlet process prior on $\mathcal{F}$
+	\end{itemize}
+\item Allele specific expression
+	\begin{itemize}
+	\item Some counts can be tracked by their origin: B vs M
+	\item How does allele specific expression relate to heterosis or differences between hybrids
+	\end{itemize}
+\end{itemize}
+
+\end{frame}
+
+
+
+\subsection{Alternative hierarchical distributions}
+\begin{frame}
+\frametitle{Scale-mixture of normals}
+
+Recall the model 
+\[ 
+y_{gn} \ind \text{Po} \left (e^{h_n + \varepsilon_{gn} + x_n' \beta_{g}} \right )
+\]
+with hierarchical distribution
+\[ 
+\beta_{g\ell}\onslide<2->{|\xi_{g\ell}} \ind N(\theta_\ell, \onslide<2->{\xi_{g\ell}}\sigma_\ell^2)
+\]
+\pause
+where the distribution of $\xi_{g\ell}$ will determine the marginal distribution for $\beta_{g\ell}$ via 
+\[ 
+p(\beta_{g\ell}) = \int N(\beta_{g\ell}|\theta_\ell,\xi_{g\ell}\sigma_\ell^2)p(\xi_{g\ell}) d \xi_{g\ell}.
+\]
+\pause
+For example, 
+\begin{itemize}[<+->]
+\item $\xi_{g\ell}=1 \implies \beta_{g\ell} \ind N(\theta_\ell,\sigma_\ell^2)$
+\item $\xi_{g\ell} \ind IG(q_\ell, r_\ell) \implies \beta_{g\ell} \ind t_{2q_\ell}(\theta_\ell,\sigma^2_\ell r_\ell/ q_\ell)$
+\item $\xi_{g\ell} \ind Exp(k_\ell) \implies \beta_{g\ell} \ind Laplace(\theta_\ell, \sigma^2_\ell/2k_\ell)$ {\tiny (Park and Casella (2008), Hans (2009))}
+\item $\xi_{g\ell} \ind Ca^+(0,1) \implies \beta_{g\ell} \ind Horseshoe(\theta_\ell,\sigma_\ell)$ {\tiny (Carvalho, Polson, and Scott 2010)}
+\end{itemize}
+\pause
+These are all implemented in {\tt fbseq}. 
+
+
+\end{frame}
+
+
+
+\subsection{Semi-parametric approach}
+\begin{frame}
+\frametitle{Dirichlet process prior}
+
+Recall the model 
+\[ 
+y_{gn} \ind \text{Po} \left (e^{h_n + \varepsilon_{gn} + x_n' \beta_{g}} \right ) \qquad \varepsilon_{gn} \ind N(0,\gamma_g)
+\]
+\pause
+Since $G$ is so large, we should be able to learn the distribution of the gene-specific parameters. \pause One possibility is 
+\[ 
+\theta_g = \left( \begin{array}{c} \beta_g' \\ \log(\gamma_g) \end{array} \right) \ind \mathcal{F}
+\]
+for some unknown distribution $\mathcal{F}$. \pause Then we can place a prior on $\mathcal{F}$, e.g. 
+\[ 
+\mathcal{F} \sim DP(a F_0),
+\]
+i.e. a Dirichlet process prior with concentration parameter $a>0$ and base measure $F_0$ on $\mathbb{R}^{L+1}$. \pause
+This has been done for differential expression in RNAseq data. {\tiny (Liu, Wang, and Liu (2015))} 
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Stick-breaking representation}
+
+A stick-breaking representation of $\mathcal{F}$ is the probability mass function
+\[ 
+p(\theta) = \sum_{k=1}^\infty \pi_k \delta_{\tilde\theta_k}(\theta)
+\]
+where $\tilde\theta_k \sim F_0$, $\pi_k= \pi'_k \prod_{i=1}^{k-1} (1-\pi'_i)$, and $\pi'_k \ind Be(1,\alpha)$.
+
+\vspace{0.1in} \pause
+
+We can approximate the infinite sum with a finite sum of $K$ components with $\pi_K = 1-\sum_{k=1}^{K-1} \pi_k$ and introduce labels $\zeta_g\in \{1,\ldots,K\}$ that indicating component membership for gene $g$. 
+
+\vspace{0.1in} \pause
+
+The additional Gibbs sampling steps are 
+\begin{itemize}[<+->]
+\item $p(\pi|\ldots)$ which has a conjugate update, 
+\item $p(\zeta|\ldots)$ which is conditionally independent across genes and therefore embarrassingly parallel and requires a parallel scan, i.e. cumulative sum, and
+\item $p(\tilde\theta|\ldots)$ which is 
+  \begin{itemize}
+  \item conditionally independent across the $K$ components and 
+  \item requires sufficient ``statistics'' of the genes in each component. {\tiny (Suchard et. al. 2008)}
+  \end{itemize}
+\end{itemize}
+\end{frame}
+
+
+
+
+\subsection{Allele specific expression}
+\begin{frame}
+\frametitle{Allele specific expression}
+
+In addition to the total count from a particular gene, sometimes we are able to identify the origin, i.e. allele B or M. \pause Scientists would be interested in detecting alleles of genes that have a ratio of expression in the hybrid that differs from 
+\begin{itemize}
+\item one and/or
+\item the ratio of parental expression.
+\end{itemize}
+
+\vspace{0.1in} \pause
+
+From a modeling perspective, this brings up at least two questions:
+\begin{itemize}
+\item how do we construct a model matrix for arbitrary scenarios {\tiny (Lithio and Nettleton 2015)} and
+\item how do we incorporate the idea of random effects, i.e. create non-independence in the samples. 
+\end{itemize}
+\end{frame}
+
+
+
+
+
+
+
+
+\begin{frame}
+\frametitle{References}
+\scriptsize
+
+\begin{itemize}
+\item Carvalho, C. M., Polson, N. G., and Scott, J. G. (2010). The horseshoe estimator for sparse signals. \emph{Biometrika} 97(2)" 465--480
+\item Gelman, A. (2006) Prior distributions for variance parameters in hierarchical models (comment on article by Browne and Draper). \emph{Bayesian analysis}, 1(3), 515--534.
+\item Gelman, A., Hill, J., and Yajima, M. (2012) Why we (usually) don't have to worry about multiple comparisons. \emph{Journal of Research on Educational Effectiveness}, 5(2), 189--211.
+\item Hans, C. (2009). Bayesian lasso regression. Biometrika, 96(4), 835-845.
+\item Lee, A., Yau, C., Giles, M. B., Doucet, A., and Holmes, C. C. (2010). On the utility of graphics cards to perform massively parallel simulation of advanced Monte Carlo methods. \emph{Journal of computational and graphical statistics}, 19(4), 769-789.
+\item Lithio, A., and Nettleton, D. (2015). Hierarchical modeling and differential expression analysis for rna-seq experiments with inbred and hybrid genotypes. \emph{Journal of Agricultural, Biological, and Environmental Statistics}, 20(4), 598-613.
+\item Liu, Fangfang, Chong Wang, and Peng Liu. (2015) A Semi-parametric Bayesian Approach for Differential Expression Analysis of RNA-seq Data. \emph{Journal of Agricultural, Biological, and Environmental Statistics} 20, no. 4 : 555--576.
+\item Park, T., and Casella, G. (2008). The Bayesian lasso. \emph{Journal of the American Statistical Association}, 103(482), 681-686.
+\item Paschold, A., Jia, Y., Marcon, C., Lund, S., Larson, N.B., Yeh, C.T., Ossowski, S., Lanz, C., Nettleton, D., Schnable, P.S. and Hochholdinger, F., (2012) Complementation contributes to transcriptome complexity in maize (Zea mays L.) hybrids relative to their inbred parents. \emph{Genome researc}h, 22(12), pp.2445--2454.
+\item Suchard, M. A., Wang, Q., Chan, C., Frelinger, J., Cron, A., and West, M. (2010). Understanding GPU programming for statistical computation: Studies in massively parallel massive mixtures. \emph{Journal of Computational and Graphical Statistics}, 19(2), 419-438.
+\end{itemize}
+\end{frame}
+
+
+
+
+
+\begin{frame}
+\frametitle{Markov chain Monte Carlo integration}
+\small
+  Consider approximating an integral via it's Markov chain Monte Carlo (MCMC) estimate, i.e. 
+  \[ E_{\theta|y}[h(\theta)|y] = \int_{\Theta} h(\theta) p(\theta|y) d\theta \quad \mbox{and} \quad 
+  \hat{h}_T = \frac{1}{T} \sum_{t=1}^{(t)} h\left(\theta^{(t)}\right). \]
+	\pause where $\theta^{(t)}$ is the $t^{th}$ iteration from the MCMC.  \pause Under regularity conditions, 
+	\begin{itemize}
+	\item SLLN: $\hat{h}_T\stackrel{a.s.}{\to} E[h(\theta)|y]$ as $T\to \infty$. \pause 
+	\item CLT: \alert{under stronger regularity conditions}, \pause
+	\[ \hat{h}_T \stackrel{d}{\to} N\left(E[h(\theta)|y], \sigma^2/T\right) \pause \]
+	where 
+	\[ \sigma^2 = Var[h(\theta)|y]\left(1+ 2\sum_{k=1}^\infty \rho_k \right) \]
+  where $\rho_k$ is the $k^{th}$ autocorrelation of the $h(\theta)$ values.
+	\end{itemize}
+\end{frame}
+
+
+\backupend
+\end{document}   
+
+
+
+
+
+
+
+
+
+
+
+
+
+

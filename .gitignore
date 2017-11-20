@@ -37,6 +37,7 @@
 *.synctex.gz
 *.synctex.gz(busy)
 *.pdfsync
+*.tex
 
 ## Auxiliary and intermediate files from other packages:
 # algorithms
@@ -218,3 +219,5 @@ TSWLatexianTemp*
 
 # expex forward references with \gathertags
 *-tags.tex
+.Rproj.user
+figure/
