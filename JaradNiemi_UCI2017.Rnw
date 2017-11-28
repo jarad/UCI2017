@@ -31,7 +31,7 @@
 \institute[ISU]{Iowa State University}
 \date{\today}
 
-\title[Fully Bayes RNAseq analysis]{Fully Bayesian analysis of RNAseq data for gene expression heterosis detection}
+\title[Fully Bayes RNAseq analysis]{Fully Bayesian analysis for\\hierarchical count regression models}
 \author{Dr. Jarad Niemi}
 
 \begin{document}
